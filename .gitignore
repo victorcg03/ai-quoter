@@ -5,6 +5,7 @@ dist/
 *.log
 pnpm-debug.log*
 npm-debug.log*
+.vscode
 
 # Env & secrets
 .env
@@ -22,3 +23,5 @@ data/
 Thumbs.db
 .vscode/
 .idea/
+
+extract-code.ps1
