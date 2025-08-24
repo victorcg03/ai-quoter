@@ -153,7 +153,6 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     const raw = await ollamaChat([sys, ctx, ...messages], {
       reqId: rid,
-      model: "llama3.1:8b",
     });
     const reply = sanitizeReply(raw);
     log.info("reply", { rid, ms: Date.now() - t0, size: reply.length });

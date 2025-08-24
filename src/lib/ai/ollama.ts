@@ -8,7 +8,7 @@ import { logger, newReqId } from "@/lib/logger";
 const OLLAMA_URL =
   (import.meta.env?.OLLAMA_URL as string) ?? "http://localhost:11434";
 const TIMEOUT_MS = Number(import.meta.env?.OLLAMA_TIMEOUT_MS ?? 25000);
-
+const DEFAULT_MODEL = (import.meta.env?.OLLAMA_MODEL as string) ?? "phi3:mini";
 function withTimeout<T>(p: Promise<T>, ms = TIMEOUT_MS) {
   return Promise.race<T>([
     p,
@@ -29,7 +29,7 @@ export async function ollamaChat(
   opts?: { model?: string; reqId?: string; ns?: string },
 ) {
   const rid = opts?.reqId ?? newReqId();
-  const model = opts?.model ?? "llama3.1:8b";
+  const model = opts?.model ?? DEFAULT_MODEL;
   const log = logger(opts?.ns ?? "OLLAMA");
 
   const msgs: ChatMessage[] =
