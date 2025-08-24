@@ -5,12 +5,12 @@ export type ChatMessage = {
 
 import { logger, newReqId } from "@/lib/logger";
 
-const OLLAMA_URL =
+export const OLLAMA_URL =
   (process.env.OLLAMA_URL as string) ||
   (import.meta.env?.OLLAMA_URL as string) ||
   "http://localhost:11434";
 
-const TIMEOUT_MS = (() => {
+export const TIMEOUT_MS = (() => {
   const raw =
     process.env.OLLAMA_TIMEOUT_MS ??
     (import.meta as any).env?.OLLAMA_TIMEOUT_MS;
@@ -18,7 +18,7 @@ const TIMEOUT_MS = (() => {
   return Number.isFinite(n) && n > 0 ? n : 25_000;
 })();
 
-const OLLAMA_MODEL =
+export const OLLAMA_MODEL =
   (process.env.OLLAMA_MODEL as string) ||
   (import.meta.env?.OLLAMA_MODEL as string) ||
   "phi3:mini";
