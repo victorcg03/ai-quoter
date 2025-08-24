@@ -10,6 +10,7 @@ import { useTextareaAutosize } from "@/hooks/useTextareaAutosize";
 import { fmtEUR } from "@/utils/currency";
 import { uid } from "@/utils/id";
 import { logger } from "@/lib/logger";
+import { readNdjson } from "@/utils/ai";
 
 type Message = { id: string; role: "assistant" | "user"; content: string };
 
@@ -206,25 +207,54 @@ export default function ConversationalQuote() {
         { role: "user", content: userText },
       ],
       state: { sector, descripcion, objetivos, pages, languages, products },
+      stream: true, // <<--- clave
     };
+
     setIsAgentThinking(true);
+
+    // crea burbuja del asistente vacía que iremos rellenando
+    const msgId = uid();
+    setMessages((m) => [...m, { id: msgId, role: "assistant", content: "" }]);
+
     try {
       const res = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      const reply: string = stripLinksAndDeploy(String(data.reply || ""));
-      add("assistant", reply.replace(/ACTION:\s*SUGGEST\s*$/i, "").trim());
-
-      const endsWithSuggest = /ACTION:\s*SUGGEST\s*$/i.test(
-        String(data.reply || ""),
-      );
-      if (data.cutoff === true) {
-        setChatCutoff(true);
+      if (!res.ok) {
+        // cae al modo no-stream por compatibilidad
+        const data = await res.json().catch(() => ({}));
+        const reply = stripLinksAndDeploy(
+          String(data.reply || "Ahora mismo no puedo pensar."),
+        );
+        setMessages((m) =>
+          m.map((x) => (x.id === msgId ? { ...x, content: reply } : x)),
+        );
         return;
       }
+
+      let full = "";
+      for await (const evt of readNdjson(res)) {
+        const delta = evt?.message?.content ? String(evt.message.content) : "";
+        if (!delta) continue;
+        full += delta;
+        // pintamos el acumulado
+        setMessages((m) =>
+          m.map((x) =>
+            x.id === msgId ? { ...x, content: stripLinksAndDeploy(full) } : x,
+          ),
+        );
+      }
+
+      const final = stripLinksAndDeploy(full).trim();
+      // post-proceso: ACTION:SUGGEST y flujo de sugerencias como antes
+      const endsWithSuggest = /ACTION:\s*SUGGEST\s*$/i.test(final);
+      const replyClean = final.replace(/ACTION:\s*SUGGEST\s*$/i, "").trim();
+      setMessages((m) =>
+        m.map((x) => (x.id === msgId ? { ...x, content: replyClean } : x)),
+      );
+
       if (endsWithSuggest || hasEnoughForSuggest) {
         const out = await doSuggest({
           sector: sector || "—",
@@ -273,9 +303,16 @@ export default function ConversationalQuote() {
         );
       }
     } catch (e: unknown) {
-      add(
-        "assistant",
-        "Ahora mismo no puedo pensar. Intenta de nuevo en unos segundos.",
+      setMessages((m) =>
+        m.map((x) =>
+          x.id === msgId
+            ? {
+                ...x,
+                content:
+                  "Ahora mismo no puedo pensar. Intenta de nuevo en unos segundos.",
+              }
+            : x,
+        ),
       );
       if (e instanceof Error) log.error("agent_error", { error: String(e) });
     } finally {
