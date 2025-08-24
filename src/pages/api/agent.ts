@@ -159,9 +159,13 @@ export const POST: APIRoute = async ({ request }) => {
     return new Response(JSON.stringify({ reply, rid }), {
       headers: { "Content-Type": "application/json" },
     });
-  } catch {
-    return new Response(JSON.stringify({ error: "agent_failed", rid }), {
-      status: 502,
-    });
+  } catch (e: unknown) {
+    log.error("error", { rid, error: String(e) });
+    return new Response(
+      JSON.stringify({ error: "agent_failed", rid, details: String(e) }),
+      {
+        status: 502,
+      },
+    );
   }
 };
