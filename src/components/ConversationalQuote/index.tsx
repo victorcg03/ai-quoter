@@ -9,8 +9,11 @@ import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useTextareaAutosize } from "@/hooks/useTextareaAutosize";
 import { fmtEUR } from "@/utils/currency";
 import { uid } from "@/utils/id";
+import { logger } from "@/lib/logger";
 
 type Message = { id: string; role: "assistant" | "user"; content: string };
+
+const log = logger("ConversationalQuote");
 
 // --- util: limpieza de URLs/claims de despliegue ---
 function stripLinksAndDeploy(text: string) {
@@ -269,11 +272,12 @@ export default function ConversationalQuote() {
           "Ajusta páginas/idiomas y los elementos incluidos. Cuando quieras, pulsa **Calcular precio**.",
         );
       }
-    } catch {
+    } catch (e: unknown) {
       add(
         "assistant",
         "Ahora mismo no puedo pensar. Intenta de nuevo en unos segundos.",
       );
+      if (e instanceof Error) log.error("agent_error", { error: String(e) });
     } finally {
       setIsAgentThinking(false);
       focusComposer();
