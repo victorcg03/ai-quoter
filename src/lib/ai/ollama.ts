@@ -62,7 +62,7 @@ export async function ollamaChat(
           model,
           messages: msgs,
           stream: false,
-          options: { temperature: 0.8, num_ctx: 4096 },
+          options: { temperature: 0.5, num_ctx: 8192 },
         }),
       }),
     );
