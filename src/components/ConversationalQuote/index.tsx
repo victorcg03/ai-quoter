@@ -201,20 +201,21 @@ export default function ConversationalQuote() {
   }, [sector, objetivos, pages, languages, descripcion, messages]);
 
   async function sendToAgent(userText: string) {
+    // Payload + flag de stream
     const payload = {
       messages: [
         ...messages.map((m) => ({ role: m.role, content: m.content })),
         { role: "user", content: userText },
       ],
       state: { sector, descripcion, objetivos, pages, languages, products },
-      stream: true, // <<--- clave
+      stream: true,
     };
 
     setIsAgentThinking(true);
 
-    // crea burbuja del asistente vacía que iremos rellenando
-    const msgId = uid();
-    setMessages((m) => [...m, { id: msgId, role: "assistant", content: "" }]);
+    // No pre-creamos burbuja; la creamos con el primer token
+    let msgId: string | null = null;
+    let full = "";
 
     try {
       const res = await fetch("/api/agent", {
@@ -222,39 +223,72 @@ export default function ConversationalQuote() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+
+      // Si el servidor no admite stream, caemos a modo no-stream
       if (!res.ok) {
-        // cae al modo no-stream por compatibilidad
         const data = await res.json().catch(() => ({}));
         const reply = stripLinksAndDeploy(
-          String(data.reply || "Ahora mismo no puedo pensar."),
+          String(
+            data.reply || "Ahora mismo no puedo pensar. Intenta de nuevo.",
+          ),
         );
-        setMessages((m) =>
-          m.map((x) => (x.id === msgId ? { ...x, content: reply } : x)),
+        setIsAgentThinking(false);
+        add("assistant", reply);
+        return;
+      }
+
+      // Throttling para evitar repintar en cada caracter
+      let lastPaint = 0;
+      const MIN_MS = 30; // ~33 fps
+
+      for await (const evt of readNdjson(res)) {
+        const delta = evt?.message?.content ? String(evt.message.content) : "";
+        if (!delta) continue;
+
+        if (!msgId) {
+          // Primer token ⇒ creamos burbuja y apagamos "escribiendo..."
+          msgId = uid();
+          setMessages((m) => [
+            ...m,
+            { id: msgId!, role: "assistant", content: "" },
+          ]);
+          setIsAgentThinking(false);
+        }
+
+        full += delta;
+
+        const now = performance.now();
+        if (now - lastPaint >= MIN_MS) {
+          const safe = stripLinksAndDeploy(full);
+          setMessages((m) =>
+            m.map((x) => (x.id === msgId ? { ...x, content: safe } : x)),
+          );
+          lastPaint = now;
+        }
+      }
+
+      // Si no llegó nada (upstream silencioso)
+      if (!msgId) {
+        setIsAgentThinking(false);
+        add(
+          "assistant",
+          "Ahora mismo no puedo pensar. Intenta de nuevo en unos segundos.",
         );
         return;
       }
 
-      let full = "";
-      for await (const evt of readNdjson(res)) {
-        const delta = evt?.message?.content ? String(evt.message.content) : "";
-        if (!delta) continue;
-        full += delta;
-        // pintamos el acumulado
-        setMessages((m) =>
-          m.map((x) =>
-            x.id === msgId ? { ...x, content: stripLinksAndDeploy(full) } : x,
-          ),
-        );
-      }
-
+      // Pintado final por si queda buffer
       const final = stripLinksAndDeploy(full).trim();
-      // post-proceso: ACTION:SUGGEST y flujo de sugerencias como antes
+
+      // Detecta ACTION:SUGGEST y limpia el sufijo del mensaje visible
       const endsWithSuggest = /ACTION:\s*SUGGEST\s*$/i.test(final);
       const replyClean = final.replace(/ACTION:\s*SUGGEST\s*$/i, "").trim();
+
       setMessages((m) =>
         m.map((x) => (x.id === msgId ? { ...x, content: replyClean } : x)),
       );
 
+      // --- Flujo de sugerencias si procede ---
       if (endsWithSuggest || hasEnoughForSuggest) {
         const out = await doSuggest({
           sector: sector || "—",
@@ -287,6 +321,7 @@ export default function ConversationalQuote() {
 
         const humanList = skus.map(humanizeSku).join(", ");
         const readable = humanList || "propuesta base";
+
         add(
           "assistant",
           `Propuesta inicial: ${readable}.` +
@@ -302,21 +337,14 @@ export default function ConversationalQuote() {
           "Ajusta páginas/idiomas y los elementos incluidos. Cuando quieras, pulsa **Calcular precio**.",
         );
       }
-    } catch (e: unknown) {
-      setMessages((m) =>
-        m.map((x) =>
-          x.id === msgId
-            ? {
-                ...x,
-                content:
-                  "Ahora mismo no puedo pensar. Intenta de nuevo en unos segundos.",
-              }
-            : x,
-        ),
+    } catch (e) {
+      setIsAgentThinking(false);
+      add(
+        "assistant",
+        "Ahora mismo no puedo pensar. Intenta de nuevo en unos segundos.",
       );
       if (e instanceof Error) log.error("agent_error", { error: String(e) });
     } finally {
-      setIsAgentThinking(false);
       focusComposer();
     }
   }
