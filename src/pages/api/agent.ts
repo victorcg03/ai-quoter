@@ -163,7 +163,13 @@ export const POST: APIRoute = async ({ request }) => {
     log.error("error", { rid, error: String(e) });
     if (e instanceof Error) {
       return new Response(
-        JSON.stringify({ error: e.message, rid, details: JSON.stringify(e) }),
+        JSON.stringify({
+          message: e?.message,
+          rid,
+          stack: e?.stack,
+          cause: e?.cause,
+          name: e?.name,
+        }),
         {
           status: 500,
         },
