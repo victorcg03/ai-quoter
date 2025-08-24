@@ -1,8 +1,14 @@
 export const prerender = false;
 import type { APIRoute } from "astro";
-import { AGENT_SYSTEM, makeAgentUserContext } from "../../lib/ai/agentPrompt";
-import { ollamaChat, type ChatMessage } from "../../lib/ai/ollama";
-import { logger, newReqId } from "../../lib/logger";
+import { AGENT_SYSTEM, makeAgentUserContext } from "@/lib/ai/agentPrompt";
+import {
+  OLLAMA_MODEL,
+  OLLAMA_URL,
+  ollamaChat,
+  TIMEOUT_MS,
+  type ChatMessage,
+} from "@/lib/ai/ollama";
+import { logger, newReqId } from "@/lib/logger";
 const log = logger("AGENT");
 
 const BANNED_HINTS = [
@@ -109,6 +115,7 @@ function sanitizeReply(txt: string) {
   return out;
 }
 
+// pages/api/agent.ts
 export const POST: APIRoute = async ({ request }) => {
   const rid = newReqId();
   const t0 = Date.now();
@@ -123,9 +130,9 @@ export const POST: APIRoute = async ({ request }) => {
   const state = body.state ?? {};
   const lastUser =
     [...messages].reverse().find((m) => m.role === "user")?.content || "";
+  const streamRequested = body?.stream === true;
 
   const skey = sessionKey(request);
-
   if (isOffTopic(lastUser)) {
     const count = (driftMap.get(skey) ?? 0) + 1;
     driftMap.set(skey, count);
@@ -149,11 +156,111 @@ export const POST: APIRoute = async ({ request }) => {
     role: "user",
     content: makeAgentUserContext(state),
   };
+  const msgs = [sys, ctx, ...messages].slice(-12); // acota contexto
 
+  // --- MODO STREAM ---
+  if (streamRequested) {
+    // construimos la petición a Ollama en stream y la devolvemos tal cual (NDJSON)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    try {
+      const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: OLLAMA_MODEL,
+          messages: msgs,
+          stream: true,
+          options: { temperature: 0.8, num_ctx: 4096 },
+        }),
+      });
+      if (!upstream.ok || !upstream.body) {
+        const text = await upstream.text().catch(() => "");
+        return new Response(
+          JSON.stringify({
+            error: "ollama_upstream_error",
+            status: upstream.status,
+            text,
+          }),
+          { status: 502, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      // pequeño filtro de saneo por chunk (URLs y promesas de despliegue)
+      const urlRe = /\bhttps?:\/\/[^\s)]+/gi;
+      const deployRe =
+        /\b(voy a|vamos a|puedo|voy)\s+(crear|hacer|publicar|subir|generar)\b.*$/gim;
+
+      const transform = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          try {
+            const txt = new TextDecoder().decode(chunk);
+            const safe = txt
+              .split("\n")
+              .map((line) => {
+                if (!line.trim()) return line;
+                // si viene con prefijo SSE "data:", respétalo pero limpia el payload
+                if (line.startsWith("data:")) {
+                  const jsonStr = line.slice(5).trim();
+                  try {
+                    const obj = JSON.parse(jsonStr);
+                    if (obj?.message?.content) {
+                      obj.message.content = String(obj.message.content)
+                        .replace(urlRe, "[enlace omitido]")
+                        .replace(deployRe, "");
+                    }
+                    return "data: " + JSON.stringify(obj);
+                  } catch {
+                    return line;
+                  }
+                } else {
+                  // NDJSON
+                  try {
+                    const obj = JSON.parse(line);
+                    if (obj?.message?.content) {
+                      obj.message.content = String(obj.message.content)
+                        .replace(urlRe, "[enlace omitido]")
+                        .replace(deployRe, "");
+                    }
+                    return JSON.stringify(obj);
+                  } catch {
+                    return line;
+                  }
+                }
+              })
+              .join("\n");
+            controller.enqueue(new TextEncoder().encode(safe));
+          } catch {
+            controller.enqueue(chunk);
+          }
+        },
+      });
+
+      const streamed = upstream.body.pipeThrough(transform);
+
+      return new Response(streamed, {
+        status: 200,
+        headers: {
+          // Ollama emite NDJSON (línea por evento). Lo pasamos tal cual.
+          "Content-Type":
+            upstream.headers.get("content-type") || "application/x-ndjson",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "Transfer-Encoding": "chunked",
+          // permite que navegadores y proxies no bufericen
+          "X-Accel-Buffering": "no",
+        },
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  // --- MODO NO-STREAM (compatibilidad actual) ---
   try {
-    const raw = await ollamaChat([sys, ctx, ...messages], {
-      reqId: rid,
-    });
+    const raw = await ollamaChat(msgs, { reqId: rid });
     const reply = sanitizeReply(raw);
     log.info("reply", { rid, ms: Date.now() - t0, size: reply.length });
     return new Response(JSON.stringify({ reply, rid }), {
@@ -170,9 +277,7 @@ export const POST: APIRoute = async ({ request }) => {
           cause: e?.cause,
           name: e?.name,
         }),
-        {
-          status: 500,
-        },
+        { status: 500 },
       );
     }
     return new Response(
