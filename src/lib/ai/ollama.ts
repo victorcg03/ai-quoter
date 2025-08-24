@@ -6,9 +6,17 @@ export type ChatMessage = {
 import { logger, newReqId } from "@/lib/logger";
 
 const OLLAMA_URL =
-  (import.meta.env?.OLLAMA_URL as string) ?? "http://localhost:11434";
+  (process.env.OLLAMA_URL as string) ||
+  (import.meta.env?.OLLAMA_URL as string) ||
+  "http://localhost:11434";
+
 const TIMEOUT_MS = Number(import.meta.env?.OLLAMA_TIMEOUT_MS ?? 25000);
-const DEFAULT_MODEL = (import.meta.env?.OLLAMA_MODEL as string) ?? "phi3:mini";
+
+const OLLAMA_MODEL =
+  (process.env.OLLAMA_MODEL as string) ||
+  (import.meta.env?.OLLAMA_MODEL as string) ||
+  "phi3:mini";
+
 function withTimeout<T>(p: Promise<T>, ms = TIMEOUT_MS) {
   return Promise.race<T>([
     p,
@@ -29,7 +37,7 @@ export async function ollamaChat(
   opts?: { model?: string; reqId?: string; ns?: string },
 ) {
   const rid = opts?.reqId ?? newReqId();
-  const model = opts?.model ?? DEFAULT_MODEL;
+  const model = opts?.model ?? OLLAMA_MODEL;
   const log = logger(opts?.ns ?? "OLLAMA");
 
   const msgs: ChatMessage[] =
@@ -37,7 +45,7 @@ export async function ollamaChat(
       ? [{ role: "user", content: messages }]
       : messages.slice(-12); // limit último 12
 
-  log.info("request", { rid, model, count: msgs.length });
+  log.info("request", { rid, model, url: OLLAMA_URL, count: msgs.length });
 
   const { res, ms } = await time(async () => {
     const r = await withTimeout(
