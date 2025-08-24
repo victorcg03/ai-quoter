@@ -161,6 +161,11 @@ export const POST: APIRoute = async ({ request }) => {
     });
   } catch (e: unknown) {
     log.error("error", { rid, error: String(e) });
+    if (e instanceof Error) {
+      return new Response(JSON.stringify({ error: e.message, rid }), {
+        status: 500,
+      });
+    }
     return new Response(
       JSON.stringify({ error: "agent_failed", rid, details: String(e) }),
       {
