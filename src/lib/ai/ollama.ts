@@ -1,3 +1,4 @@
+// lib/ai/ollama.ts
 export type ChatMessage = {
   role: "system" | "user" | "assistant";
   content: string;
@@ -22,6 +23,25 @@ export const OLLAMA_MODEL =
   (process.env.OLLAMA_MODEL as string) ||
   (import.meta.env?.OLLAMA_MODEL as string) ||
   "phi3:mini";
+
+// 👉 helper para cabeceras con Basic Auth
+function buildOllamaHeaders(extra?: Record<string, string>): HeadersInit {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(extra ?? {}),
+  };
+  // Solo LEER secretos desde process.env (no import.meta.env)
+  const raw =
+    process.env.OLLAMA_BASIC_AUTH ||
+    (import.meta as any)?.env?.OLLAMA_BASIC_AUTH;
+  if (raw) {
+    const value = raw.startsWith("Basic ")
+      ? raw
+      : "Basic " + Buffer.from(raw).toString("base64");
+    headers.Authorization = value;
+  }
+  return headers;
+}
 
 function withTimeout<T>(p: Promise<T>, ms = TIMEOUT_MS) {
   return Promise.race<T>([
@@ -49,7 +69,7 @@ export async function ollamaChat(
   const msgs: ChatMessage[] =
     typeof messages === "string"
       ? [{ role: "user", content: messages }]
-      : messages.slice(-12); // limit último 12
+      : messages.slice(-12);
 
   log.info("request", { rid, model, url: OLLAMA_URL, count: msgs.length });
 
@@ -57,7 +77,7 @@ export async function ollamaChat(
     const r = await withTimeout(
       fetch(`${OLLAMA_URL}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: buildOllamaHeaders(), // 👈 usa auth aquí
         body: JSON.stringify({
           model,
           messages: msgs,
@@ -85,3 +105,6 @@ export async function ollamaChat(
   });
   return String(content);
 }
+
+// Exporta si quieres reutilizar en otros ficheros:
+export { buildOllamaHeaders };

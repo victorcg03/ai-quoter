@@ -7,6 +7,7 @@ import {
   ollamaChat,
   TIMEOUT_MS,
   type ChatMessage,
+  buildOllamaHeaders,
 } from "@/lib/ai/ollama";
 import { logger, newReqId } from "@/lib/logger";
 const log = logger("AGENT");
@@ -168,7 +169,7 @@ export const POST: APIRoute = async ({ request }) => {
       const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
         method: "POST",
         signal: controller.signal,
-        headers: { "Content-Type": "application/json" },
+        headers: buildOllamaHeaders(),
         body: JSON.stringify({
           model: OLLAMA_MODEL,
           messages: msgs,
